@@ -48,4 +48,24 @@ for i in a:
 print(i)
 `, [`2`])
 
+// 5 - for in def
+assertPrint("for-in-def",
+`
+def x(a: [int]) -> int:
+  b: int = 0
+  c: int = 0
+  for b in a:
+    c = b
+  return c
+
+a:[int] = None
+i:int = 2
+a = [0, 1, 2, 3]
+for i in a:
+   print(i)
+
+print(x(a))
+`, [`0`, `1`, `2`, `3`, `3`])
+
+
 });

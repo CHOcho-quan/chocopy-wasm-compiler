@@ -450,19 +450,52 @@ export function tcBlock(env : GlobalTypeEnv, locals : LocalTypeEnv, stmts : Arra
   if (!locals.topLevel) {
     if (!returnCheck && locals.expectedRet.tag !== "none") {
       // Check if there's conditional expression that returns for all paths
-      let ifFlag = false;
+
       stmts.forEach(stmt => {
-        if (stmt.tag === "if") {
-          ifFlag = true;
-          if (!tcIfReturn(stmt))
-            throw new TypeCheckError("not all paths return");
+        switch (stmt.tag) {
+          case "return":
+            throw new TypeCheckError("should not reach here");
+          case "while":
+          case "for":
+            if (!returnCheck)
+              returnCheck = tcLoopReturn(stmt);
+            break;
+          case "if":
+            if (!returnCheck)
+              returnCheck = tcIfReturn(stmt);
+            break;
         }
       });
-      if (!ifFlag)
+      if (!returnCheck)
         throw new TypeCheckError("not all paths return");
     }
   }
   return tStmts;
+}
+
+function tcLoopReturn(loopStmt : Stmt<Type>) : Boolean {
+  if (loopStmt.tag === "for" || loopStmt.tag === "while") {
+    let returnCheck : Boolean = false;
+    loopStmt.body.forEach(stmt => {
+      switch (stmt.tag) {
+        case "return":
+          returnCheck = true;
+          break;
+        case "while":
+        case "for":
+          if (!returnCheck)
+            returnCheck = tcLoopReturn(stmt);
+          break;
+        case "if":
+          if (!returnCheck)
+            returnCheck = tcIfReturn(stmt);
+          break;
+      }
+    })
+
+    return returnCheck;
+  } else
+    throw new TypeCheckError("tcLoopReturn should not be called");
 }
 
 function tcIfReturn(ifStmt : Stmt<Type>) : Boolean {
@@ -474,38 +507,55 @@ function tcIfReturn(ifStmt : Stmt<Type>) : Boolean {
    */
   // First check if return is existed in every branch
   if (ifStmt.tag === "if") {
-    var ifCheck : Boolean = false;
+    var ifChecks : Boolean[] = [];
+    var ifCheck : Boolean = true;
     ifStmt.bodies.forEach(stmts => {
-      stmts.forEach(stmt => {
-        if (stmt.tag === "return")
-          ifCheck = true;
+      ifChecks.push(false);
+      stmts.forEach((stmt, idx) => {
+        switch (stmt.tag) {
+          case "return":
+            ifChecks[idx] = true;
+            break;
+          case "while":
+          case "for":
+            if (!ifChecks[idx])
+              ifChecks[idx] = tcLoopReturn(stmt);
+            break;
+          case "if":
+            if (!ifChecks[idx])
+              ifChecks[idx] = tcIfReturn(stmt);
+            break;
+        }
       });
     });
+    for (let i = 0; i < ifChecks.length; i ++) {
+      if (ifChecks[i] == false) {
+        ifCheck = false;
+        break;
+      }
+    }
+
     var elseCheck : Boolean = false;
     ifStmt.els.forEach(stmt => {
-      if (stmt.tag === "return")
-        elseCheck = true;
-    });
-    if (elseCheck && ifCheck) return true;
-
-    // Not all exist return, check nested if
-    if (!ifCheck) {
-      ifStmt.bodies.forEach(stmts => {
-        stmts.forEach(stmt => {
-          if (stmt.tag === "if")
-            ifCheck = tcIfReturn(stmt);
-        })
-      })
-    }
-    if (!elseCheck) {
-      ifStmt.els.forEach(stmt => {
-        if (stmt.tag === "if")
+      switch (stmt.tag) {
+        case "return":
+          elseCheck = true;
+          break;
+        case "while":
+        case "for":
+          if (!elseCheck)
+            elseCheck = tcLoopReturn(stmt);
+          break;
+        case "if":
+          if (!elseCheck)
           elseCheck = tcIfReturn(stmt);
-      });
-    }
+          break;
+      }
+    });
     return elseCheck && ifCheck;
+
   }
-  return true;
+  return false;
 }
 
 export function tcStmt(env : GlobalTypeEnv, locals : LocalTypeEnv, stmt : Stmt<null>) : Stmt<Type> {
@@ -546,14 +596,14 @@ export function tcStmt(env : GlobalTypeEnv, locals : LocalTypeEnv, stmt : Stmt<n
       });
       const tBodies : Array<Stmt<Type>[]> = [];
       stmt.bodies.forEach(stmts => {
-        tBodies.push(tcBlock(env, locals, stmts))
+        tBodies.push(stmts.map(st => tcStmt(env, locals, st)));
         thnTyp = locals.actualRet;
-        if (!isAssignable(env, locals.actualRet, locals.expectedRet)) 
-          throw new TypeCheckError("expected return type `" + (locals.expectedRet as any).tag + "`; got type `" + (locals.actualRet as any).tag + "`");
+        // if (!isAssignable(env, locals.actualRet, locals.expectedRet)) 
+        //   throw new TypeCheckError("expected return type `" + (locals.expectedRet as any).tag + "`; got type `" + (locals.actualRet as any).tag + "`");
       });
-      const tEls = tcBlock(env, locals, stmt.els);
-      if (!isAssignable(env, locals.actualRet, locals.expectedRet)) 
-        throw new TypeCheckError("expected return type `" + (locals.expectedRet as any).tag + "`; got type `" + (locals.actualRet as any).tag + "`");
+      const tEls = stmt.els.map(st => tcStmt(env, locals, st));
+      // if (!isAssignable(env, locals.actualRet, locals.expectedRet)) 
+      //   throw new TypeCheckError("expected return type `" + (locals.expectedRet as any).tag + "`; got type `" + (locals.actualRet as any).tag + "`");
       // const elsTyp = locals.actualRet; // NOT FOR ChocoPy
       // if (thnTyp !== elsTyp)
       //   locals.actualRet = { tag: "either", left: thnTyp, right: elsTyp }
@@ -575,11 +625,11 @@ export function tcStmt(env : GlobalTypeEnv, locals : LocalTypeEnv, stmt : Stmt<n
         throw new TypeCheckError(`iterative var should be str, get ${tIterVar.a.tag} instead`);
       if (tIterable.a.tag === "list" && !equalType(tIterable.a.elem, tIterVar.a))
         throw new TypeCheckError(`iterative var should be ${tIterable.a.elem.tag}, get ${tIterVar.a.tag} instead`);
-      const tfBody = tcBlock(env, locals, stmt.body);
+      const tfBody = stmt.body.map(st => tcStmt(env, locals, st));
       return {...stmt, a: NONE, itvar: tIterVar, iterable: tIterable, body: tfBody};
     case "while":
       var tCond = tcExpr(env, locals, stmt.cond);
-      const tBody = tcBlock(env, locals, stmt.body);
+      const tBody = stmt.body.map(st => tcStmt(env, locals, st));
       if (!equalType(tCond.a, BOOL)) 
         throw new TypeCheckError("Condition Expression Must be a bool");
       return {a: NONE, tag:stmt.tag, cond: tCond, body: tBody};
@@ -673,7 +723,7 @@ export function tcExpr(env : GlobalTypeEnv, locals : LocalTypeEnv, expr : Expr<n
         if (iterable(tArg.a)) {
           return {...expr, a: NUM, arg: tArg}
         } else {
-          throw new TypeError("Function call type mismatch: " + expr.name);
+          throw new TypeCheckError("Function call type mismatch: " + expr.name);
         }
       } else if(env.functions.has(expr.name)) {
         const [[expectedArgTyp], retTyp] = env.functions.get(expr.name);
@@ -682,10 +732,10 @@ export function tcExpr(env : GlobalTypeEnv, locals : LocalTypeEnv, expr : Expr<n
         if(isAssignable(env, tArg.a, expectedArgTyp)) {
           return {...expr, a: retTyp, arg: tArg};
         } else {
-          throw new TypeError("Function call type mismatch: " + expr.name);
+          throw new TypeCheckError("Function call type mismatch: " + expr.name);
         }
       } else {
-        throw new TypeError("Undefined function: " + expr.name);
+        throw new TypeCheckError("Undefined function: " + expr.name);
       }
     case "builtin2":
       if(env.functions.has(expr.name)) {
@@ -695,10 +745,10 @@ export function tcExpr(env : GlobalTypeEnv, locals : LocalTypeEnv, expr : Expr<n
         if(isAssignable(env, leftTyp, tLeftArg.a) && isAssignable(env, rightTyp, tRightArg.a)) {
           return {...expr, a: retTyp, left: tLeftArg, right: tRightArg};
         } else {
-          throw new TypeError("Function call type mismatch: " + expr.name);
+          throw new TypeCheckError("Function call type mismatch: " + expr.name);
         }
       } else {
-        throw new TypeError("Undefined function: " + expr.name);
+        throw new TypeCheckError("Undefined function: " + expr.name);
       }
     case "call":
       if(env.classes.has(expr.name)) {
@@ -722,7 +772,7 @@ export function tcExpr(env : GlobalTypeEnv, locals : LocalTypeEnv, expr : Expr<n
 
         const tArgs = expr.arguments.map(arg => tcExpr(env, locals, arg));
         if(argLength === expr.arguments.length &&
-          tArgs.every((tArg, i) => tArg.a === argTypes[i])) {
+          tArgs.every((tArg, i) => isAssignable(env, tArg.a, argTypes[i]))) {
           argNonlocal.forEach(name => {
             expr.arguments.push({ tag: "id", name })
           });
@@ -731,20 +781,20 @@ export function tcExpr(env : GlobalTypeEnv, locals : LocalTypeEnv, expr : Expr<n
           else
             return {...expr, name: `${locals.className}$${locals.name}$${expr.name}`, a: retType, arguments: expr.arguments};
         } else {
-          throw new TypeError("Function call type mismatch: " + expr.name);
+          throw new TypeCheckError("Function call type mismatch: " + expr.name);
         }
       } else if(env.functions.has(expr.name)) {
         const [argTypes, retType] = env.functions.get(expr.name);
         const tArgs = expr.arguments.map(arg => tcExpr(env, locals, arg));
 
         if(argTypes.length === expr.arguments.length &&
-           tArgs.every((tArg, i) => tArg.a === argTypes[i])) {
-           return {...expr, a: retType, arguments: expr.arguments};
+          tArgs.every((tArg, i) => isAssignable(env, tArg.a, argTypes[i]))) {
+          return {...expr, a: retType, arguments: expr.arguments};
          } else {
-          throw new TypeError("Function call type mismatch: " + expr.name);
+          throw new TypeCheckError("Function call type mismatch: " + expr.name);
          }
       } else {
-        throw new TypeError("Undefined function: " + expr.name);
+        throw new TypeCheckError("Undefined function: " + expr.name);
       }
     case "lookup":
       var tObj = tcExpr(env, locals, expr.obj);

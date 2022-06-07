@@ -71,10 +71,10 @@ export function augmentEnv(env: GlobalEnv, prog: Program<Type>) : GlobalEnv {
 export async function run(source : string, config: Config) : Promise<[Value, GlobalEnv, GlobalTypeEnv, string, WebAssembly.WebAssemblyInstantiatedSource]> {
   const parsed = parse(source);
   const [tprogram, tenv] = tc(config.typeEnv, parsed);
-  console.log(JSON.stringify(tprogram, null, 4));
+  // console.log(JSON.stringify(tprogram, null, 4));
   const globalEnv = augmentEnv(config.env, tprogram);
   const irprogram = lowerProgram(tprogram, globalEnv);
-  console.log(irprogram);
+  // console.log(irprogram);
   const progTyp = tprogram.a;
   var returnType = "";
   var returnExpr = "";
