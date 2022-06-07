@@ -24,6 +24,7 @@ function generateName(base : string) : string {
 // }
 
 var inhTable: Array<IR.ClassIndex<Type>> = []
+var loopLabels: Array<string> = []
 
 export function lowerProgram(p : AST.Program<Type>, env : GlobalEnv) : IR.Program<Type> {
     // console.log(JSON.stringify(p, null, 4));
@@ -31,6 +32,7 @@ export function lowerProgram(p : AST.Program<Type>, env : GlobalEnv) : IR.Progra
     var firstBlock : IR.BasicBlock<Type> = {  a: p.a, label: generateName("$startProg"), stmts: [] }
     blocks.push(firstBlock);
     inhTable = p.table;
+    loopLabels = [];
     var inits = flattenStmts(p.stmts, blocks, env);
     return {
         a: p.a,
@@ -257,7 +259,10 @@ function flattenStmt(s : AST.Stmt<Type>, blocks: Array<IR.BasicBlock<Type>>, env
       }
       
       // body statement
+      var prevLbl : Array<string> = loopLabels;
+      loopLabels = [forStartLbl, forbodyLbl, forEndLbl, newName];
       var bodyinits = flattenStmts(s.body, blocks, env);
+      loopLabels = prevLbl;
       pushStmtsToLastBlock(blocks, { tag: "assign", a: NONE, name: newName,
         value: {a: NUM, tag: "binop", op: AST.BinOp.Plus, left: { a: NUM, tag: "id", name: newName },
           right: { a: NUM, tag: "wasmint", value: 1 } } }) // ind = ind + 1
@@ -278,12 +283,28 @@ function flattenStmt(s : AST.Stmt<Type>, blocks: Array<IR.BasicBlock<Type>>, env
       pushStmtsToLastBlock(blocks, ...cstmts, { tag: "ifjmp", cond: cexpr, thn: whilebodyLbl, els: whileEndLbl });
 
       blocks.push({  a: s.a, label: whilebodyLbl, stmts: [] })
+      var prevLbl : Array<string> = loopLabels;
+      loopLabels = [whileStartLbl, whilebodyLbl, whileEndLbl];
       var bodyinits = flattenStmts(s.body, blocks, env);
+      loopLabels = prevLbl;
       pushStmtsToLastBlock(blocks, { tag: "jmp", lbl: whileStartLbl });
 
       blocks.push({  a: s.a, label: whileEndLbl, stmts: [] })
 
       return [...cinits, ...bodyinits]
+    
+    case "break":
+      pushStmtsToLastBlock(blocks, { tag: "jmp", lbl: loopLabels[2] });
+      return []
+    
+    case "continue":
+      if (loopLabels.length === 4)
+        pushStmtsToLastBlock(blocks, { tag: "assign", a: NONE, name: loopLabels[3],
+        value: {a: NUM, tag: "binop", op: AST.BinOp.Plus, left: { a: NUM, tag: "id", name: loopLabels[3] },
+        right: { a: NUM, tag: "wasmint", value: 1 } } }, { tag: "jmp", lbl: loopLabels[0] });
+      else
+      pushStmtsToLastBlock(blocks, { tag: "jmp", lbl: loopLabels[0] });
+      return []
   }
 }
 

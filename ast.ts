@@ -34,6 +34,8 @@ export type Stmt<A> =
   | {  a?: A, tag: "if", conds: Array<Expr<A>>, bodies: Array<Stmt<A>[]>, els: Array<Stmt<A>> }
   | {  a?: A, tag: "for", itvar: Expr<A>, iterable: Expr<A>, body: Array<Stmt<A>> }
   | {  a?: A, tag: "while", cond: Expr<A>, body: Array<Stmt<A>> }
+  | {  a?: A, tag: "break" }
+  | {  a?: A, tag: "continue" }
 
 export type Expr<A> =
     {  a?: A, tag: "literal", value: Literal }

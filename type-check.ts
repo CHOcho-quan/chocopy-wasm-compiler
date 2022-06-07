@@ -36,7 +36,8 @@ export type LocalTypeEnv = {
   expectedRet: Type,
   actualRet: Type,
   className: string,
-  topLevel: Boolean
+  topLevel: Boolean,
+  inLoop: Boolean
 }
 
 const defaultGlobalFunctions = new Map();
@@ -83,7 +84,8 @@ export function emptyLocalTypeEnv() : LocalTypeEnv {
     expectedRet: NONE,
     actualRet: NONE,
     className: "",
-    topLevel: true
+    topLevel: true,
+    inLoop: false
   };
 }
 
@@ -388,6 +390,7 @@ function mergeLocalEnv(son : LocalTypeEnv, father : LocalTypeEnv) : LocalTypeEnv
   son.vars.forEach((typ, name) => { locals.vars.set(name, typ); });
   father.vars.forEach((typ, name) => { locals.nonlocal.set(name, typ); });
   locals.nested = son.nested;
+  locals.inLoop = son.inLoop || father.inLoop;
   return locals;
 }
 
@@ -560,6 +563,14 @@ function tcIfReturn(ifStmt : Stmt<Type>) : Boolean {
 
 export function tcStmt(env : GlobalTypeEnv, locals : LocalTypeEnv, stmt : Stmt<null>) : Stmt<Type> {
   switch(stmt.tag) {
+    case "break":
+      if (!locals.inLoop)
+        throw new TypeCheckError("Cannot call break outside of a loop")
+      return { a: NONE, tag: "break" }
+    case "continue":
+      if (!locals.inLoop)
+        throw new TypeCheckError("Cannot call continue outside of a loop")
+      return { a: NONE, tag: "continue" }
     case "comment":
       return { a: NONE, tag: "comment" }
     case "scope":
@@ -625,11 +636,17 @@ export function tcStmt(env : GlobalTypeEnv, locals : LocalTypeEnv, stmt : Stmt<n
         throw new TypeCheckError(`iterative var should be str, get ${tIterVar.a.tag} instead`);
       if (tIterable.a.tag === "list" && !equalType(tIterable.a.elem, tIterVar.a))
         throw new TypeCheckError(`iterative var should be ${tIterable.a.elem.tag}, get ${tIterVar.a.tag} instead`);
+      var prevInloop = locals.inLoop;
+      locals.inLoop = true;
       const tfBody = stmt.body.map(st => tcStmt(env, locals, st));
+      locals.inLoop = prevInloop;
       return {...stmt, a: NONE, itvar: tIterVar, iterable: tIterable, body: tfBody};
     case "while":
       var tCond = tcExpr(env, locals, stmt.cond);
+      var prevInloop = locals.inLoop;
+      locals.inLoop = true;
       const tBody = stmt.body.map(st => tcStmt(env, locals, st));
+      locals.inLoop = prevInloop;
       if (!equalType(tCond.a, BOOL)) 
         throw new TypeCheckError("Condition Expression Must be a bool");
       return {a: NONE, tag:stmt.tag, cond: tCond, body: tBody};

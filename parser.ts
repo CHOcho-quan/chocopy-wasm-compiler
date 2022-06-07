@@ -260,6 +260,10 @@ export function traverseArguments(c : TreeCursor, s : string) : Array<Expr<null>
 
 export function traverseStmt(c : TreeCursor, s : string) : Stmt<null> {
   switch(c.node.type.name) {
+    case "BreakStatement":
+      return { tag: "break" }
+    case "ContinueStatement":
+      return { tag: "continue" }
     case "Comment":
       return { tag: "comment" }
     case "ReturnStatement":
@@ -623,6 +627,6 @@ export function parse(source : string) : Program<null> {
   const t = parser.parse(source).cursor();
   const str = stringifyTree(t, source, 0);
   // console.log(str);
-  // console.log(t);
+  console.log(t);
   return traverse(t, source);
 }
